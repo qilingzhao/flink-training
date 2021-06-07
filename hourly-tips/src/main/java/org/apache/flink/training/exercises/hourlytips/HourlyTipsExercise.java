@@ -59,25 +59,33 @@ public class HourlyTipsExercise extends ExerciseBase {
 		DataStream<TaxiFare> fares = env.addSource(fareSourceOrTest(new TaxiFareGenerator()));
 
 //		throw new MissingSolutionException();
-		DataStream<Tuple3<Long, Long, Float>> hourlyMax = fares
-				.keyBy(new KeySelector<TaxiFare, Long>() {
-					@Override
-					public Long getKey(TaxiFare value) throws Exception {
-						return value.driverId;
-					}
-				}).window(TumblingEventTimeWindows.of(Time.hours(1)))
-				.aggregate(new DriverTotalTip(), new ProcessWin1())
-					.keyBy(new KeySelector<Tuple3<Long, Long, Float>, Long>() {
-						@Override
-						public Long getKey(Tuple3<Long, Long, Float> value) throws Exception {
-							return value.f0;
-						}
-					}).window(TumblingEventTimeWindows.of(Time.hours(1))).reduce(new ReduceFunction<Tuple3<Long, Long, Float>>() {
-						@Override
-						public Tuple3<Long, Long, Float> reduce(Tuple3<Long, Long, Float> value1, Tuple3<Long, Long, Float> value2) throws Exception {
-							return value1.f2 > value2.f2 ? value1 : value2;
-						}
-					});
+		// my solution
+//		DataStream<Tuple3<Long, Long, Float>> hourlyMax = fares
+//				.keyBy(new KeySelector<TaxiFare, Long>() {
+//					@Override
+//					public Long getKey(TaxiFare value) throws Exception {
+//						return value.driverId;
+//					}
+//				}).window(TumblingEventTimeWindows.of(Time.hours(1)))
+//				.aggregate(new DriverTotalTip(), new ProcessWin1())
+//					.keyBy(new KeySelector<Tuple3<Long, Long, Float>, Long>() {
+//						@Override
+//						public Long getKey(Tuple3<Long, Long, Float> value) throws Exception {
+//							return value.f0;
+//						}
+//					}).window(TumblingEventTimeWindows.of(Time.hours(1))).reduce(new ReduceFunction<Tuple3<Long, Long, Float>>() {
+//						@Override
+//						public Tuple3<Long, Long, Float> reduce(Tuple3<Long, Long, Float> value1, Tuple3<Long, Long, Float> value2) throws Exception {
+//							return value1.f2 > value2.f2 ? value1 : value2;
+//						}
+//					});
+
+		// better solution
+		DataStream<Tuple3<Long, Long, Float> > hourlyTip = fares.keyBy(fare -> fare.driverId)
+				.window(TumblingEventTimeWindows.of(Time.hours(1))).process(new SumDriverTips());
+
+		DataStream<Tuple3<Long, Long, Float> > hourlyMax = hourlyTip.keyBy(fare -> fare.f0)
+				.window(TumblingEventTimeWindows.of(Time.hours(1))).maxBy(2);
 		printOrTest(hourlyMax);
 
 		// execute the transformation pipeline
@@ -124,4 +132,15 @@ public class HourlyTipsExercise extends ExerciseBase {
 		}
 	}
 
+	public static class SumDriverTips extends ProcessWindowFunction<TaxiFare, Tuple3<Long, Long, Float>, Long, TimeWindow> {
+
+		@Override
+		public void process(Long aLong, Context context, Iterable<TaxiFare> elements, Collector<Tuple3<Long, Long, Float>> out) throws Exception {
+			Float sum = 0f;
+			for (TaxiFare taxiFare : elements) {
+				sum += taxiFare.tip;
+			}
+			out.collect(new Tuple3<>(context.window().getEnd(), aLong, sum));
+		}
+	}
 }

@@ -20,6 +20,8 @@ package org.apache.flink.training.exercises.longrides;
 
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.TimerService;
@@ -56,8 +58,8 @@ public class LongRidesExercise extends ExerciseBase {
 
 		DataStream<TaxiRide> longRides = rides
 				.keyBy((TaxiRide ride) -> ride.rideId)
-				.process(new MatchFunction());
-
+//				.process(new MatchFunction());
+		        .process(new BetterMatchFunction());
 		printOrTest(longRides);
 
 		env.execute("Long Taxi Rides");
@@ -104,6 +106,45 @@ public class LongRidesExercise extends ExerciseBase {
 			if (isEnd == null || !isEnd) {
 				out.collect(startTaxiRideMap.get(rideId));
 			}
+		}
+	}
+
+
+	public static class BetterMatchFunction extends KeyedProcessFunction<Long, TaxiRide, TaxiRide> {
+
+		private transient ValueState<TaxiRide> existRide;
+
+		@Override
+		public void open(Configuration config) throws Exception {
+			ValueStateDescriptor<TaxiRide> existRideDesc =
+					new ValueStateDescriptor<TaxiRide>("existRideDesc", TaxiRide.class);
+			existRide = getRuntimeContext().getState(existRideDesc);
+		}
+
+		@Override
+		public void processElement(TaxiRide value, Context ctx, Collector<TaxiRide> out) throws Exception {
+			TimerService timerService = ctx.timerService();
+
+			TaxiRide previousRide = existRide.value();
+
+			if (previousRide == null) {
+				if (value.isStart) {
+					timerService.registerEventTimeTimer(value.getEventTime() + Time.hours(2).toMilliseconds());
+				}
+				existRide.update(value);
+			} else {
+				if (!value.isStart) {
+					timerService.deleteEventTimeTimer(existRide.value().getEventTime() + Time.hours(2).toMilliseconds());
+				} else {
+					existRide.clear();
+				}
+			}
+		}
+
+		@Override
+		public void onTimer(long timestamp, OnTimerContext context, Collector<TaxiRide> out) throws Exception {
+			out.collect(existRide.value());
+			existRide.clear();
 		}
 	}
 }

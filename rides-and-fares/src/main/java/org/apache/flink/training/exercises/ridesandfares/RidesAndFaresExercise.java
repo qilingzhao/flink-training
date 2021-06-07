@@ -30,7 +30,6 @@ import org.apache.flink.training.exercises.common.datatypes.TaxiRide;
 import org.apache.flink.training.exercises.common.sources.TaxiFareGenerator;
 import org.apache.flink.training.exercises.common.sources.TaxiRideGenerator;
 import org.apache.flink.training.exercises.common.utils.ExerciseBase;
-import org.apache.flink.training.exercises.common.utils.MissingSolutionException;
 import org.apache.flink.util.Collector;
 
 /**
@@ -71,29 +70,35 @@ public class RidesAndFaresExercise extends ExerciseBase {
 	}
 
 	public static class EnrichmentFunction extends RichCoFlatMapFunction<TaxiRide, TaxiFare, Tuple2<TaxiRide, TaxiFare>> {
-		private ValueState<TaxiRide> rides;
-		private ValueState<TaxiFare> fares;
+		private ValueState<TaxiRide> rideState;
+		private ValueState<TaxiFare> fareState;
 
 		@Override
 		public void open(Configuration config) throws Exception {
-			rides = getRuntimeContext().getState(new ValueStateDescriptor<TaxiRide>("rides", TaxiRide.class));
-			fares = getRuntimeContext().getState(new ValueStateDescriptor<TaxiFare>("fares", TaxiFare.class));
+			rideState = getRuntimeContext().getState(new ValueStateDescriptor<TaxiRide>("rides", TaxiRide.class));
+			fareState = getRuntimeContext().getState(new ValueStateDescriptor<TaxiFare>("fares", TaxiFare.class));
 		}
 
 		@Override
 		public void flatMap1(TaxiRide ride, Collector<Tuple2<TaxiRide, TaxiFare>> out) throws Exception {
-			if (fares.value() != null) {
-				out.collect(new Tuple2<>(ride, fares.value()));
+			TaxiFare fare = fareState.value();
+			if (fare != null) {
+				fareState.clear();
+				out.collect(new Tuple2<>(ride, fare));
+			} else {
+				rideState.update(ride);
 			}
-			rides.update(ride);
 		}
 
 		@Override
 		public void flatMap2(TaxiFare fare, Collector<Tuple2<TaxiRide, TaxiFare>> out) throws Exception {
-			if (rides.value() != null) {
-				out.collect(new Tuple2<>(rides.value(), fare));
+			TaxiRide ride = rideState.value();
+			if (ride != null) {
+				rideState.clear(); // 当不使用状态时，要及时清空
+				out.collect(new Tuple2<>(ride, fare));
+			} else {
+				fareState.update(fare);
 			}
-			fares.update(fare);
 		}
 	}
 }

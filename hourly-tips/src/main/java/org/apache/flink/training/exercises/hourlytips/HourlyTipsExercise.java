@@ -18,12 +18,22 @@
 
 package org.apache.flink.training.exercises.hourlytips;
 
+import org.apache.flink.api.common.functions.AggregateFunction;
+import org.apache.flink.api.common.functions.ReduceFunction;
+import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.training.exercises.common.datatypes.TaxiFare;
 import org.apache.flink.training.exercises.common.sources.TaxiFareGenerator;
 import org.apache.flink.training.exercises.common.utils.ExerciseBase;
-import org.apache.flink.training.exercises.common.utils.MissingSolutionException;
+import org.apache.flink.util.Collector;
+
 
 /**
  * The "Hourly Tips" exercise of the Flink training in the docs.
@@ -48,12 +58,70 @@ public class HourlyTipsExercise extends ExerciseBase {
 		// start the data generator
 		DataStream<TaxiFare> fares = env.addSource(fareSourceOrTest(new TaxiFareGenerator()));
 
-		throw new MissingSolutionException();
-
-//		printOrTest(hourlyMax);
+//		throw new MissingSolutionException();
+		DataStream<Tuple3<Long, Long, Float>> hourlyMax = fares
+				.keyBy(new KeySelector<TaxiFare, Long>() {
+					@Override
+					public Long getKey(TaxiFare value) throws Exception {
+						return value.driverId;
+					}
+				}).window(TumblingEventTimeWindows.of(Time.hours(1)))
+				.aggregate(new DriverTotalTip(), new ProcessWin1())
+					.keyBy(new KeySelector<Tuple3<Long, Long, Float>, Long>() {
+						@Override
+						public Long getKey(Tuple3<Long, Long, Float> value) throws Exception {
+							return value.f0;
+						}
+					}).window(TumblingEventTimeWindows.of(Time.hours(1))).reduce(new ReduceFunction<Tuple3<Long, Long, Float>>() {
+						@Override
+						public Tuple3<Long, Long, Float> reduce(Tuple3<Long, Long, Float> value1, Tuple3<Long, Long, Float> value2) throws Exception {
+							return value1.f2 > value2.f2 ? value1 : value2;
+						}
+					});
+		printOrTest(hourlyMax);
 
 		// execute the transformation pipeline
-//		env.execute("Hourly Tips (java)");
+		env.execute("Hourly Tips (java)");
+	}
+
+
+	public static class DriverTotalTip implements AggregateFunction<TaxiFare, Float, Float> {
+
+		@Override
+		public Float createAccumulator() {
+			return 0f;
+		}
+
+		@Override
+		public Float add(TaxiFare value, Float accumulator) {
+			return value.tip + accumulator;
+		}
+
+		@Override
+		public Float getResult(Float accumulator) {
+			return accumulator;
+		}
+
+		@Override
+		public Float merge(Float a, Float b) {
+			return a + b;
+		}
+	}
+
+
+	public static class ProcessWin1 extends ProcessWindowFunction<Float, Tuple3<Long, Long, Float>, Long, TimeWindow> {
+
+		@Override
+		public void process(Long aLong, Context context, Iterable<Float> elements, Collector<Tuple3<Long, Long, Float>> out) throws Exception {
+			float maxTips = 0f;
+			for (Float tip : elements) {
+				if (tip > maxTips) {
+					maxTips = tip;
+				}
+			}
+			Long endTimeStamp = context.window().getEnd();
+			out.collect(new Tuple3<>(endTimeStamp, aLong, maxTips));
+		}
 	}
 
 }
